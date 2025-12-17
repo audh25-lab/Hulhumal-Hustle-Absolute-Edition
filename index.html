@@ -1,207 +1,297 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Hulhumalé Hustle – Absolute Edition</title>
+<title>Hulhumalé Hustle — MAXIMUM OVERDRIVE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
-body{margin:0;background:#000;color:#00ffd0;font-family:monospace;text-align:center}
-canvas{border:4px solid #00ffd0;background:#040404;touch-action:none}
-#ui,#gang,#cutscene{
- position:absolute;left:0;right:0;margin:auto;color:#0fc
+:root{
+ --neon:#00ffd0;
+ --hot:#ff3b7a;
+ --bg:#020406;
 }
-#cutscene{
- top:0;bottom:0;
- background:rgba(0,0,0,.92);
- display:none;
- flex-direction:column;
- justify-content:center;
- font-size:18px;
- padding:40px;
+html,body{
+ margin:0;padding:0;
+ background:radial-gradient(circle at top,#071a22,#000);
+ color:var(--neon);
+ font-family:monospace;
+ overflow:hidden;
+}
+canvas{display:block;margin:auto}
+.screen{
+ position:absolute;inset:0;
+ background:rgba(0,0,0,.96);
+ display:flex;flex-direction:column;
+ align-items:center;justify-content:center;
+ text-align:center;z-index:10;
+}
+h1,h2{text-shadow:0 0 20px var(--neon)}
+button{
+ background:linear-gradient(45deg,var(--neon),#0ff);
+ border:none;padding:14px 26px;
+ font-family:monospace;font-size:16px;
+ border-radius:10px;
+ box-shadow:0 0 25px var(--neon);
+}
+#hud{
+ position:absolute;top:8px;left:0;right:0;
+ text-align:center;font-size:14px;
+ text-shadow:0 0 12px var(--neon);
+}
+#settings{
+ position:absolute;bottom:6px;left:0;right:0;
+ background:rgba(0,0,0,.7);
+ font-size:12px;padding:6px;text-align:center
+}
+#touch{
+ position:absolute;bottom:80px;left:0;right:0;
+ display:flex;justify-content:center;gap:14px
+}
+.touchBtn{
+ width:58px;height:58px;border-radius:16px;
+ background:radial-gradient(circle,#0ff,var(--neon));
+ color:#000;font-size:22px;
+ display:flex;align-items:center;justify-content:center;
+ box-shadow:0 0 25px var(--neon)
+}
+#minimap{
+ position:absolute;right:8px;top:48px;
+ width:120px;height:120px;
+ background:#000;border:1px solid var(--neon)
 }
 </style>
 </head>
 <body>
 
-<h2>🏝️ Hulhumalé Hustle: Island Wars</h2>
-<div id="ui"></div>
-<div id="gang"></div>
-<div id="cutscene"></div>
-<canvas id="c" width="600" height="600"></canvas>
+<div id="title" class="screen">
+<h1>🏝️ Hulhumalé Hustle</h1>
+<h2>MAXIMUM OVERDRIVE</h2>
+<p>Story • Co-Op • Boss Gangs • 3D Neon</p>
+<button onclick="startGame()">START</button>
+</div>
+
+<div id="story" class="screen" style="display:none"></div>
+<div id="end" class="screen" style="display:none"></div>
+
+<div id="hud"></div>
+<div id="settings">
+Glow <input type="checkbox" id="glow" checked>
+Depth <input type="range" id="depth" min="0.3" max="1.2" step="0.1" value="0.9">
+Particles <input type="checkbox" id="fx" checked>
+Scan <input type="checkbox" id="scan" checked>
+</div>
+
+<canvas id="c" width="720" height="720"></canvas>
+<canvas id="minimap" width="120" height="120"></canvas>
+
+<div id="touch">
+<div class="touchBtn" ontouchstart="dir(0,-1)">⬆</div>
+<div class="touchBtn" ontouchstart="dir(-1,0)">⬅</div>
+<div class="touchBtn" ontouchstart="dir(1,0)">➡</div>
+<div class="touchBtn" ontouchstart="dir(0,1)">⬇</div>
+</div>
 
 <script>
-/* ===== CORE ===== */
-const c=document.getElementById("c"),x=c.getContext("2d");
-const ui=document.getElementById("ui");
-const gangUI=document.getElementById("gang");
-const cut=document.getElementById("cutscene");
-
-const TILE=24,ROWS=25,COLS=25;
-let level=1,score=0,lives=5,power=0,night=false,ended=false;
+/* ================= CORE ================= */
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const m=document.getElementById("minimap").getContext("2d");
+const hud=document.getElementById("hud"),story=document.getElementById("story");
+const TILE=28,ROWS=25,COLS=25;
+let level=1,score=0,lives=5,power=0,night=false,running=false,ended=false;
+let depth=0.9,shake=0;
 let hs=localStorage.hhHS||0;
+let particles=[];
 
-/* ===== AUDIO ===== */
-const AC=new (window.AudioContext||webkitAudioContext)();
-function beat(freq,d=0.2){
+/* ================= AUDIO ================= */
+let AC;
+function audio(){if(!AC)AC=new(window.AudioContext||webkitAudioContext)();}
+function beat(f){
+ if(!AC)return;
  const o=AC.createOscillator(),g=AC.createGain();
- o.frequency.value=freq;
+ o.type="sawtooth";o.frequency.value=f;
  o.connect(g);g.connect(AC.destination);
- o.start();
- g.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+d);
- o.stop(AC.currentTime+d);
+ o.start();g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.18);
+ o.stop(AC.currentTime+.18);
 }
 
-/* ===== STORY ===== */
-function showStory(t){
- cut.innerHTML=t+"<br><br><small>Tap / Click / Key</small>";
- cut.style.display="flex";
- cut.onclick=()=>cut.style.display="none";
-}
-
-/* ===== MAP ===== */
+/* ================= MAP ================= */
 function genMap(addu=false){
- const m=[];
+ let m=[];
  for(let y=0;y<ROWS;y++){
   m[y]=[];
   for(let x=0;x<COLS;x++){
-   if(x===0||y===0||x===COLS-1||y===ROWS-1||
-     (addu?(y%4===0&&x%3):(x%4===0&&y%3)))
-    m[y][x]=1;
-   else m[y][x]=Math.random()<0.06?3:2;
+   if(x==0||y==0||x==COLS-1||y==ROWS-1||
+     (addu?(y%4==0&&x%3):(x%4==0&&y%3))) m[y][x]=1;
+   else m[y][x]=Math.random()<.06?3:2;
   }
  }
  return m;
 }
-let map=genMap();
+let map;
 
-/* ===== PLAYERS ===== */
+/* ================= PLAYERS ================= */
 const p1={x:1,y:1,dx:0,dy:0,icon:"😎"};
 const p2={x:1,y:2,dx:0,dy:0,icon:"🤝"};
 
 onkeydown=e=>{
- if(e.key.includes("Arrow")){
-  if(e.key.includes("Up"))[p1.dx,p1.dy]=[0,-1];
-  if(e.key.includes("Down"))[p1.dx,p1.dy]=[0,1];
-  if(e.key.includes("Left"))[p1.dx,p1.dy]=[-1,0];
-  if(e.key.includes("Right"))[p1.dx,p1.dy]=[1,0];
+ audio();
+ const k=e.key;
+ if(k.includes("Arrow")){
+  if(k=="ArrowUp")[p1.dx,p1.dy]=[0,-1];
+  if(k=="ArrowDown")[p1.dx,p1.dy]=[0,1];
+  if(k=="ArrowLeft")[p1.dx,p1.dy]=[-1,0];
+  if(k=="ArrowRight")[p1.dx,p1.dy]=[1,0];
  }
- if("wasd".includes(e.key.toLowerCase())){
-  if(e.key==="w")[p2.dx,p2.dy]=[0,-1];
-  if(e.key==="s")[p2.dx,p2.dy]=[0,1];
-  if(e.key==="a")[p2.dx,p2.dy]=[-1,0];
-  if(e.key==="d")[p2.dx,p2.dy]=[1,0];
+ if("wasd".includes(k)){
+  if(k=="w")[p2.dx,p2.dy]=[0,-1];
+  if(k=="s")[p2.dx,p2.dy]=[0,1];
+  if(k=="a")[p2.dx,p2.dy]=[-1,0];
+  if(k=="d")[p2.dx,p2.dy]=[1,0];
  }
 };
+function dir(dx,dy){audio();[p1.dx,p1.dy]=[dx,dy]}
 
-/* ===== GANG DATABASE ===== */
+/* ================= GANGS ================= */
 const gangsDB={
- male:{
-  C:["Low Tide","Breakwater Boys","Red Buoy","Anchor Nine","Concrete Current"],
-  B:["Boru Park","Dotfall","Brother Foot","Iron Jetty"],
-  A:["Henvari Syndicate","Masuun Crew","Vaika Circle","North Coil","Bo Snare","Ell Tee"]
- },
- addu:{
-  C:["Son of Salts","High Paper","6 Beys","Jo Lians"],
-  B:["Milo Juice City","Xe Pear","Chis Wiss","4OA Land"],
-  A:["Lions","East Waste Coats","Sand Paper","MBH"]
- }
+ male:{C:["Low Tide","Breakwater Boys","Red Buoy"],
+       B:["Boru Park","Dotfall","Iron Jetty"],
+       A:["Henvari Syndicate","Masuun Crew","Vaika Circle","North Coil"]},
+ addu:{C:["Son of Salts","6 Beys","Jo Lians"],
+       B:["Milo Juice City","Xe Pear"],
+       A:["Lions","Sand Paper","MBH"]}
 };
-
-/* ===== SPAWN ===== */
+let gangs=[];
 function spawn(){
- let list=[],region=level<7?"male":"addu";
- let tier=level%5===0?"A":level%3===0?"B":"C";
- let names=gangsDB[region][tier];
- names.slice(0,Math.min(3,level)).forEach((n,i)=>{
-  list.push({
-   name:n,
-   x:COLS-2-i,y:ROWS-2-i,dx:0,dy:0,
-   speed:(tier==="C"?1:tier==="B"?2:3)+(night?1:0),
-   hp:n==="MBH"?6:tier==="A"?2:1,
-   icon:n==="MBH"?"💀":tier==="A"?"👹":tier==="B"?"🤬":"😈"
-  });
- });
- gangUI.innerText=`${region.toUpperCase()} • ${tier}-TIER`;
- setTimeout(()=>gangUI.innerText="",2000);
- return list;
+ let r=level<7?"male":"addu";
+ let t=level%5==0?"A":level%3==0?"B":"C";
+ return gangsDB[r][t].map((n,i)=>({
+  name:n,x:COLS-2-i,y:ROWS-2-i,dx:0,dy:0,
+  speed:(t=="C"?1:t=="B"?2:3)+(night?1:0),
+  hp:n=="MBH"?14:(t=="A"?3:1),
+  icon:n=="MBH"?"💀":t=="A"?"👹":t=="B"?"🤬":"😈"
+ }));
 }
-let gangs=spawn();
 
-/* ===== LOGIC ===== */
+/* ================= STORY ================= */
+function cut(t){
+ story.innerHTML=t+"<br><br><small>Tap</small>";
+ story.style.display="flex";
+ story.onclick=()=>story.style.display="none";
+}
+
+/* ================= LOGIC ================= */
 function move(o){
  let nx=o.x+o.dx,ny=o.y+o.dy;
- if(map[ny][nx]!==1){o.x=nx;o.y=ny;}
+ if(map[ny][nx]!=1){o.x=nx;o.y=ny}
 }
 function ai(g){
- let t=Math.random()<0.5?p1:p2;
- g.dx=Math.sign(t.x-g.x);
- g.dy=Math.sign(t.y-g.y);
+ let target=power?{x:Math.random()*COLS,y:Math.random()*ROWS}:p1;
+ let dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+ let best=dirs[0],d=1e9;
+ dirs.forEach(v=>{
+  let nx=g.x+v[0],ny=g.y+v[1];
+  if(map[ny][nx]==1)return;
+  let dd=Math.hypot(target.x-nx,target.y-ny);
+  if(dd<d){d=dd;best=v}
+ });
+ [g.dx,g.dy]=best;
 }
-function checkPlayer(p){
- if(map[p.y][p.x]===2){map[p.y][p.x]=0;score+=10;beat(500)}
- if(map[p.y][p.x]===3){map[p.y][p.x]=0;power=220;beat(900,0.3)}
+function spark(x,y,col){
+ if(!document.getElementById("fx").checked)return;
+ for(let i=0;i<8;i++)particles.push({
+  x,y,vx:(Math.random()-.5)*2,vy:(Math.random()-.5)*2,
+  l:20,c:col
+ });
 }
 
 function update(){
- if(ended) return;
-
+ if(!running||ended)return;
  [p1,p2].forEach(move);
- [p1,p2].forEach(checkPlayer);
-
+ [p1,p2].forEach(p=>{
+  if(map[p.y][p.x]==2){map[p.y][p.x]=0;score+=10;beat(420);spark(p.x,p.y,var(--neon))}
+  if(map[p.y][p.x]==3){map[p.y][p.x]=0;power=260;beat(880)}
+ });
  gangs.forEach(g=>{
   for(let i=0;i<g.speed;i++){ai(g);move(g)}
   [p1,p2].forEach(p=>{
-   if(g.x===p.x&&g.y===p.y){
-    if(power){g.hp--;score+=150;beat(300)}
-    else {lives--;p.x=1;p.y=1;beat(120,0.4)}
+   if(g.x==p.x&&g.y==p.y){
+    if(power){g.hp--;score+=200;shake=8}
+    else{lives--;shake=14;p.x=1;p.y=1}
    }
   });
  });
-
  gangs=gangs.filter(g=>g.hp>0);
  if(power)power--;
-
  if(!gangs.length){
-  level++;
-  night=level%4===0;
-  map=genMap(level>=7);
-  gangs=spawn();
-
-  if(level===1)showStory("Malé streets. Small crews. Fast feet.");
-  if(level===7)showStory("South side. Addu heat rising.");
-  if(gangs.some(g=>g.name==="MBH"))
-   showStory("MBH runs everything. End it.");
-
-  if(level>12 && !gangs.length){
-   hs=Math.max(hs,score);localStorage.hhHS=hs;
-   showStory("🏆 MBH defeated.<br>Streets cleared.<br>Score: "+score);
-   ended=true;
+  level++;night=level%4==0;
+  map=genMap(level>=7);gangs=spawn();
+  if(level==1)cut("Malé streets. Neon nights.");
+  if(level==7)cut("Addu blocks. No mercy.");
+  if(gangs.some(g=>g.name=="MBH"))cut("MBH controls everything.");
+  if(level>14){
+   ended=true;hs=Math.max(hs,score);localStorage.hhHS=hs;
+   document.getElementById("end").innerHTML=
+   "<h1>🏆 MBH DEFEATED</h1><p>Score "+score+"</p><button onclick='location.reload()'>RESTART</button>";
+   document.getElementById("end").style.display="flex";
   }
  }
 }
 
-/* ===== DRAW ===== */
-function drawT(px,py,t){
- x.font="18px monospace";
- x.textAlign="center";x.textBaseline="middle";
- x.fillText(t,px*TILE+12,py*TILE+12);
+/* ================= DRAW ================= */
+function iso(x,y,z=0){
+ return{
+  x:c.width/2+(x-y)*TILE+(Math.random()-.5)*shake,
+  y:90+(x+y)*TILE*.5-z+(Math.random()-.5)*shake
+ };
 }
 function draw(){
- x.clearRect(0,0,c.width,c.height);
- for(let y=0;y<ROWS;y++)for(let z=0;z<COLS;z++){
-  if(map[y][z]===1){
-   x.fillStyle=night?"#011":"#033";
-   x.fillRect(z*TILE,y*TILE,TILE,TILE);
+ ctx.clearRect(0,0,c.width,c.height);
+ ctx.shadowBlur=document.getElementById("glow").checked?16:0;
+ ctx.shadowColor=night?"#0ff":"#00ffd0";
+
+ for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+  if(map[y][x]==1){
+   let p=iso(x,y,depth*TILE);
+   ctx.fillStyle=night?"#011":"#033";
+   ctx.fillRect(p.x,p.y,TILE,TILE*.5);
   }
-  if(map[y][z]===2)drawT(z,y,"🍍");
-  if(map[y][z]===3)drawT(z,y,"🥤");
+  if(map[y][x]==2){let p=iso(x,y);ctx.fillText("🍍",p.x,p.y)}
+  if(map[y][x]==3){let p=iso(x,y);ctx.fillText("🥤",p.x,p.y)}
  }
- drawT(p1.x,p1.y,p1.icon);
- drawT(p2.x,p2.y,p2.icon);
- gangs.forEach(g=>drawT(g.x,g.y,power?"😱":g.icon));
- ui.innerText=`Lvl:${level} Lives:${lives} Score:${score} HS:${hs} ${night?"🌙 NIGHT":""}`;
+ function ch(o){
+  let p=iso(o.x,o.y,TILE*.5);
+  ctx.font="22px monospace";ctx.textAlign="center";
+  ctx.fillText(o.icon,p.x,p.y);
+ }
+ ch(p1);ch(p2);gangs.forEach(ch);
+
+ particles=particles.filter(p=>p.l--);
+ particles.forEach(p=>{
+  let q=iso(p.x,p.y);
+  ctx.fillStyle=p.c;ctx.fillRect(q.x,q.y,2,2);
+  p.x+=p.vx*.1;p.y+=p.vy*.1;
+ });
+
+ if(document.getElementById("scan").checked){
+  ctx.fillStyle="rgba(0,0,0,.18)";
+  for(let i=0;i<c.height;i+=3)ctx.fillRect(0,i,c.width,1);
+ }
+ hud.innerText=`Lvl ${level} Lives ${lives} Score ${score} HS ${hs} ${night?"🌙":""}`;
+
+ m.clearRect(0,0,120,120);
+ m.fillStyle="#0ff";
+ m.fillRect(p1.x*4,p1.y*4,4,4);
+ gangs.forEach(g=>m.fillRect(g.x*4,g.y*4,4,4));
+ shake=Math.max(0,shake-1);
 }
 
-setInterval(()=>{update();draw()},120);
+/* ================= LOOP ================= */
+function loop(){update();draw();if(running)requestAnimationFrame(loop)}
+function startGame(){
+ document.getElementById("title").style.display="none";
+ running=true;map=genMap();gangs=spawn();loop();
+}
+document.getElementById("depth").oninput=e=>depth=e.target.value;
 </script>
 </body>
 </html>
